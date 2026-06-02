@@ -2,7 +2,7 @@ const initSqlJs = require("sql.js");
 const fs = require("fs");
 const path = require("path");
 
-const DB_PATH = path.join(__dirname, "bot.db");
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, "bot.db");
 let db = null;
 
 // ─────────────────────────────────────────────
@@ -10,6 +10,13 @@ let db = null;
 // ─────────────────────────────────────────────
 async function initDB() {
   const SQL = await initSqlJs();
+
+  // Make sure the database directory exists (useful for persistent disks)
+  const dbDir = path.dirname(DB_PATH);
+  if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
+  }
+
   db = fs.existsSync(DB_PATH)
     ? new SQL.Database(fs.readFileSync(DB_PATH))
     : new SQL.Database();

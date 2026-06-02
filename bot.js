@@ -1,15 +1,19 @@
+require("dotenv").config();
 const TelegramBot = require("node-telegram-bot-api");
 const axios = require("axios");
 const db = require("./database");
 const { t } = require("./lang");
+const http = require("http");
 
 // ╔══════════════════════════════════════╗
 // ║  QUYIDAGILARNI O'ZGARTIRING:        ║
 // ║  TOKEN    — @BotFather dan           ║
 // ║  ADMIN_IDS — @userinfobot dan        ║
 // ╚══════════════════════════════════════╝
-const TOKEN = "8886292829:AAFTEiKetZwfxJGq-df_HN1p0GU7plFvI5g";
-const ADMIN_IDS = [8158002704]; // <- Telegram ID ingiz
+const TOKEN = process.env.BOT_TOKEN || "8886292829:AAFTEiKetZwfxJGq-df_HN1p0GU7plFvI5g";
+const ADMIN_IDS = process.env.ADMIN_IDS
+  ? process.env.ADMIN_IDS.split(",").map(id => parseInt(id.trim())).filter(id => !isNaN(id))
+  : [8158002704]; // <- Telegram ID ingiz
 
 db.initDB().then(() => {
   startBot();
@@ -19,8 +23,49 @@ db.initDB().then(() => {
 });
 
 function startBot() {
+  let bot;
 
-const bot = new TelegramBot(TOKEN, { polling: true });
+  if (process.env.RENDER_EXTERNAL_URL) {
+    // Webhook mode (Render for Web Services)
+    bot = new TelegramBot(TOKEN, { webHook: true });
+    bot.setWebHook(`${process.env.RENDER_EXTERNAL_URL}/bot${TOKEN}`);
+    console.log(`📡 Webhook rejimida ishga tushdi: ${process.env.RENDER_EXTERNAL_URL}/bot${TOKEN}`);
+
+    // Create a native HTTP server for webhooks and Render Health Check
+    const server = http.createServer((req, res) => {
+      if (req.method === "POST" && req.url === `/bot${TOKEN}`) {
+        let body = "";
+        req.on("data", chunk => {
+          body += chunk.toString();
+        });
+        req.on("end", () => {
+          try {
+            const payload = JSON.parse(body);
+            bot.processUpdate(payload);
+          } catch (e) {
+            console.error("❌ Webhook parser xatoligi:", e.message);
+          }
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end("OK");
+        });
+      } else if (req.method === "GET" && (req.url === "/" || req.url === "/health")) {
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end("OK");
+      } else {
+        res.writeHead(404, { "Content-Type": "text/plain" });
+        res.end("Not Found");
+      }
+    });
+
+    const port = process.env.PORT || 10000;
+    server.listen(port, () => {
+      console.log(`📡 Webhook HTTP server ${port}-portda tinglamoqda`);
+    });
+  } else {
+    // Polling mode (Local testing / Worker)
+    bot = new TelegramBot(TOKEN, { polling: true });
+    console.log("🔌 Polling (so'rov) rejimi faollashtirildi");
+  }
 
 // ═══════════════════════════════════════════════════
 //  KLAVIATURALAR

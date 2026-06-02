@@ -1,9 +1,19 @@
 services:
-  - type: worker
-    name: telegram-bot
+  - type: web
+    name: foydabot
     runtime: node
     buildCommand: npm install
     startCommand: node bot.js
     envVars:
       - key: NODE_ENV
         value: production
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+      - key: DB_PATH
+        value: /var/lib/data/bot.db
+    disk:
+      name: foydabot-disk
+      mountPath: /var/lib/data
+      sizeGB: 1
