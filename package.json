@@ -1,0 +1,22 @@
+{
+  "name": "tg-bot",
+  "version": "2.0.0",
+  "description": "Telegram bot - valyuta, ob-havo, admin panel, SQLite",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "nodemon bot.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.7.2",
+    "better-sqlite3": "^9.6.0",
+    "node-telegram-bot-api": "^0.67.0",
+    "sql.js": "^1.14.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}
