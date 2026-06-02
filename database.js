@@ -47,6 +47,15 @@ async function initDB() {
     );
   `);
 
+  // ── MIGRATION: eski DB ga yangi ustunlar qo'shish ──
+  const migrations = [
+    "ALTER TABLE users ADD COLUMN score INTEGER DEFAULT 0",
+    "ALTER TABLE users ADD COLUMN lang TEXT DEFAULT 'uz'",
+  ];
+  for (const sql of migrations) {
+    try { db.run(sql); } catch(e) { /* ustun allaqachon bor */ }
+  }
+
   save();
   return db;
 }
