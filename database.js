@@ -29,6 +29,7 @@ async function initDB() {
       username    TEXT DEFAULT '',
       lang        TEXT DEFAULT 'uz',
       score       INTEGER DEFAULT 0,
+      status      TEXT DEFAULT 'active',
       created_at  TEXT DEFAULT (date('now')),
       last_seen   TEXT DEFAULT (datetime('now'))
     );
@@ -58,6 +59,7 @@ async function initDB() {
   const migrations = [
     "ALTER TABLE users ADD COLUMN score INTEGER DEFAULT 0",
     "ALTER TABLE users ADD COLUMN lang TEXT DEFAULT 'uz'",
+    "ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'",
   ];
   for (const sql of migrations) {
     try { db.run(sql); } catch(e) { /* ustun allaqachon bor */ }
@@ -231,6 +233,20 @@ function getLatestNews(limit = 5) {
   return rows;
 }
 
+function blockUser(telegramId, status = "blocked") {
+  db.run("UPDATE users SET status=? WHERE telegram_id=?", [status, telegramId]);
+  save();
+}
+
+function isBlocked(telegramId) {
+  const stmt = db.prepare("SELECT status FROM users WHERE telegram_id=?");
+  stmt.bind([telegramId]);
+  const found = stmt.step();
+  const row = found ? stmt.getAsObject() : null;
+  stmt.free();
+  return row ? row.status === "blocked" : false;
+}
+
 module.exports = {
   initDB, save,
   addUser, getUserLang, setUserLang, updateLastSeen, getAllUsers, getStats,
@@ -238,4 +254,5 @@ module.exports = {
   addReminder, getDueReminders, markReminderDone, getUserReminders,
   addFeedback, getAllFeedbacks,
   addNews, getLatestNews,
+  blockUser, isBlocked,
 };

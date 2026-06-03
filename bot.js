@@ -78,10 +78,12 @@ function mainKeyboard(lang) {
     reply_markup: {
       keyboard: [
         [{ text: t("btn_currency", lang) },   { text: t("btn_weather", lang) }],
-        [{ text: t("btn_games", lang) },       { text: t("btn_news", lang) }],
-        [{ text: t("btn_calc", lang) },        { text: t("btn_reminder", lang) }],
-        [{ text: t("btn_poll", lang) },        { text: t("btn_language", lang) }],
-        [{ text: t("btn_help", lang) }],
+        [{ text: t("btn_ai", lang) },         { text: t("btn_downloader", lang) }],
+        [{ text: t("btn_crypto", lang) },     { text: t("btn_qr", lang) }],
+        [{ text: t("btn_tts", lang) },        { text: t("btn_games", lang) }],
+        [{ text: t("btn_news", lang) },       { text: t("btn_calc", lang) }],
+        [{ text: t("btn_reminder", lang) },   { text: t("btn_poll", lang) }],
+        [{ text: t("btn_language", lang) },   { text: t("btn_help", lang) }],
       ],
       resize_keyboard: true,
     },
@@ -94,7 +96,8 @@ function adminKeyboard() {
       keyboard: [
         [{ text: "📊 Statistika" },   { text: "📝 Foydalanuvchilar" }],
         [{ text: "📢 Broadcast" },    { text: "💬 Feedbacklar" }],
-        [{ text: "🏆 Reyting" },      { text: "🔙 Asosiy menyu" }],
+        [{ text: "🏆 Reyting" },      { text: "💬 Baza Backup" }],
+        [{ text: "🔙 Asosiy menyu" }],
       ],
       resize_keyboard: true,
     },
@@ -268,10 +271,19 @@ bot.on("message", async (msg) => {
   const userId = msg.from.id;
   const lang = db.getUserLang(userId);
 
+  // 1. BLOKLANGANLIKNI TEKSHIRISH
+  if (db.isBlocked(userId)) {
+    return bot.sendMessage(chatId, t("user_blocked", lang));
+  }
+
   db.updateLastSeen(userId);
 
-  // Rasm/Stiker saqlash
+  // Rasm/Stiker saqlash yoki QR kod skanerlash
   if (msg.photo || msg.sticker) {
+    const state = getState(userId);
+    if (state && state.mode === "qr" && msg.photo) {
+      return handleQRScan(msg, chatId, lang);
+    }
     return handleMedia(msg, chatId, userId, lang);
   }
 
@@ -370,6 +382,92 @@ bot.on("message", async (msg) => {
         }
       }
     }
+
+    // 🤖 AI CHAT JAVOB
+    if (state.mode === "ai") {
+      if (text === "/cancel") {
+        clearState(userId);
+        return bot.sendMessage(chatId, t("cancelled", lang), mainKeyboard(lang));
+      }
+      if (!process.env.GEMINI_API_KEY) {
+        return bot.sendMessage(chatId, "❌ Gemini API Key sozlanmagan! Admin bilan bog'laning.");
+      }
+      await bot.sendMessage(chatId, t("ai_thinking", lang));
+      try {
+        const response = await axios.post(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+          {
+            contents: [{ parts: [{ text: text }] }]
+          }
+        );
+        const answer = response.data.candidates[0].content.parts[0].text;
+        return bot.sendMessage(chatId, answer, { parse_mode: "Markdown" });
+      } catch (e) {
+        console.error("AI Error:", e.message);
+        return bot.sendMessage(chatId, t("ai_error", lang));
+      }
+    }
+
+    // 📥 DOWNLOADER JAVOB (Cobalt API)
+    if (state.mode === "downloader") {
+      if (text === "/cancel") {
+        clearState(userId);
+        return bot.sendMessage(chatId, t("cancelled", lang), mainKeyboard(lang));
+      }
+      const urlRegex = /^(https?:\/\/)?(www\.)?(instagram\.com|tiktok\.com|youtube\.com|youtu\.be)\/[^\s]+$/i;
+      if (!urlRegex.test(text.trim())) {
+        return bot.sendMessage(chatId, "❌ Havola noto'g'ri. Instagram, TikTok yoki YouTube havolasi yuboring.");
+      }
+      await bot.sendMessage(chatId, t("downloader_downloading", lang));
+      try {
+        const response = await axios.post(
+          "https://api.cobalt.tools/api/json",
+          { url: text.trim() },
+          { headers: { Accept: "application/json", "Content-Type": "application/json" }, timeout: 15000 }
+        );
+        if (response.data && response.data.url) {
+          if (response.data.status === "stream" || response.data.status === "redirect") {
+            await bot.sendVideo(chatId, response.data.url, { caption: "📥 Video yuklandi!" });
+          } else {
+            await bot.sendMessage(chatId, `🔗 Yuklab olish havolasi:\n\n[Havola](${response.data.url})`, { parse_mode: "Markdown" });
+          }
+        } else {
+          throw new Error("Cobalt returned empty data");
+        }
+      } catch (e) {
+        console.error("Downloader Error:", e.message);
+        return bot.sendMessage(chatId, t("downloader_error", lang));
+      }
+      return;
+    }
+
+    // 🔤 QR KOD GENERATOR JAVOB
+    if (state.mode === "qr") {
+      if (text === "/cancel") {
+        clearState(userId);
+        return bot.sendMessage(chatId, t("cancelled", lang), mainKeyboard(lang));
+      }
+      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(text)}`;
+      await bot.sendPhoto(chatId, qrUrl, { caption: "🔤 Sizning QR kodingiz!" });
+      return;
+    }
+
+    // 🗣 TEXT TO SPEECH (Google TTS)
+    if (state.mode === "tts") {
+      if (text === "/cancel") {
+        clearState(userId);
+        return bot.sendMessage(chatId, t("cancelled", lang), mainKeyboard(lang));
+      }
+      const ttsLang = lang === "uz" ? "tr" : lang; // fallback uz -> tr (Turkish sounds close)
+      const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${ttsLang}&q=${encodeURIComponent(text.slice(0, 200))}`;
+      try {
+        await bot.sendVoice(chatId, ttsUrl, { caption: "🗣 Matn ovozli xabarga aylantirildi!" });
+      } catch (e) {
+        console.error("TTS Error:", e.message);
+        return bot.sendMessage(chatId, "❌ Ovozga aylantirishda xatolik yuz berdi.");
+      }
+      return;
+    }
   }
 
   // ── ADMIN TUGMALARI ──
@@ -378,6 +476,18 @@ bot.on("message", async (msg) => {
     if (text === "📝 Foydalanuvchilar") return sendUserList(chatId);
     if (text === "🏆 Reyting") return sendTopRating(chatId);
     if (text === "💬 Feedbacklar") return sendFeedbacks(chatId);
+    if (text === "💬 Baza Backup") {
+      const fs = require("fs");
+      const path = require("path");
+      try {
+        const DB_PATH = process.env.DB_PATH || path.join(__dirname, "bot.db");
+        await bot.sendDocument(chatId, DB_PATH, { caption: "🗄 SQLite ma'lumotlar bazasi zaxira nusxasi (backup)." }, { filename: "bot.db" });
+      } catch (e) {
+        console.error("Backup Error:", e.message);
+        await bot.sendMessage(chatId, "❌ Bazani zaxiralashda xatolik.");
+      }
+      return;
+    }
     if (text === "📢 Broadcast") {
       setState(userId, "broadcast");
       return bot.sendMessage(chatId,
@@ -386,6 +496,52 @@ bot.on("message", async (msg) => {
       );
     }
     if (text === "🔙 Asosiy menyu") return bot.sendMessage(chatId, "🏠 Asosiy menyu:", mainKeyboard(lang));
+  }
+
+  // ── AI CHAT ──
+  if (text === t("btn_ai", lang)) {
+    setState(userId, "ai");
+    return bot.sendMessage(chatId, t("ai_prompt", lang), { reply_markup: { remove_keyboard: true } });
+  }
+
+  // ── DOWNLOADER ──
+  if (text === t("btn_downloader", lang)) {
+    setState(userId, "downloader");
+    return bot.sendMessage(chatId, t("downloader_prompt", lang), { reply_markup: { remove_keyboard: true } });
+  }
+
+  // ── KRIPTO ──
+  if (text === t("btn_crypto", lang)) {
+    try {
+      const { data } = await axios.get(
+        "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,binancecoin,ripple,solana,toncoin&vs_currencies=usd"
+      );
+      const lines = [
+        `🪙 Bitcoin (BTC): *$${data.bitcoin.usd.toLocaleString()}*`,
+        `🪙 Ethereum (ETH): *$${data.ethereum.usd.toLocaleString()}*`,
+        `Solana (SOL): *$${data.solana.usd.toLocaleString()}*`,
+        `🪙 TON Coin (TON): *$${data.toncoin.usd.toLocaleString()}*`,
+        `🪙 BNB: *$${data.binancecoin.usd.toLocaleString()}*`,
+        `🪙 Ripple (XRP): *$${data.ripple.usd.toLocaleString()}*`,
+      ].join("\n");
+      await bot.sendMessage(chatId, `📊 *${t("crypto_title", lang)}:*\n\n${lines}`, { parse_mode: "Markdown" });
+    } catch (e) {
+      console.error("Crypto API Error:", e.message);
+      await bot.sendMessage(chatId, "❌ Kriptovalyuta narxlarini olishda xatolik yuz berdi.");
+    }
+    return;
+  }
+
+  // ── QR KOD ──
+  if (text === t("btn_qr", lang)) {
+    setState(userId, "qr");
+    return bot.sendMessage(chatId, t("qr_prompt", lang), { reply_markup: { remove_keyboard: true } });
+  }
+
+  // ── TTS ──
+  if (text === t("btn_tts", lang)) {
+    setState(userId, "tts");
+    return bot.sendMessage(chatId, t("tts_prompt", lang), { reply_markup: { remove_keyboard: true } });
   }
 
   // ── TIL ──
@@ -658,6 +814,12 @@ bot.on("callback_query", async (query) => {
   const data    = query.data;
   const lang    = db.getUserLang(userId);
 
+  // 1. BLOKLANGANLIKNI TEKSHIRISH
+  if (db.isBlocked(userId)) {
+    await bot.answerCallbackQuery(query.id, { text: t("user_blocked", lang), show_alert: true });
+    return;
+  }
+
   await bot.answerCallbackQuery(query.id);
 
   // ── TIL ──
@@ -748,6 +910,140 @@ bot.on("callback_query", async (query) => {
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: msgId });
     return bot.sendMessage(chatId, `✅ *${rating}/5 baho qoldirdingiz!* Rahmat 🙏`, { parse_mode: "Markdown" });
   }
+});
+
+// ═══════════════════════════════════════════════════
+//  QR KOD SKANERLASH YORDAMCHI FUNKSIYASI
+// ═══════════════════════════════════════════════════
+
+async function handleQRScan(msg, chatId, lang) {
+  const photo = msg.photo[msg.photo.length - 1]; // eng katta rasm
+  try {
+    await bot.sendMessage(chatId, "🔍 QR kod o'qilmoqda...");
+    const fileLink = await bot.getFileLink(photo.file_id);
+    const scanResponse = await axios.get(
+      `https://api.qrserver.com/v1/read-qr-code/?fileurl=${encodeURIComponent(fileLink)}`
+    );
+    const result = scanResponse.data[0].symbol[0].data;
+    if (result) {
+      bot.sendMessage(chatId, t("qr_scan_result", lang).replace("{result}", result));
+    } else {
+      bot.sendMessage(chatId, t("qr_scan_error", lang));
+    }
+  } catch (e) {
+    console.error("QR Scan Error:", e.message);
+    bot.sendMessage(chatId, t("qr_scan_error", lang));
+  }
+}
+
+// ═══════════════════════════════════════════════════
+//  OVOZLI XABAR TINGLOVCHI (STT — Speech-to-Text)
+// ═══════════════════════════════════════════════════
+
+bot.on("voice", async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  const lang = db.getUserLang(userId);
+
+  if (db.isBlocked(userId)) return;
+
+  if (!process.env.GEMINI_API_KEY) {
+    return; // Gemini kaliti bo'lmasa transkritsiya qilmaymiz
+  }
+
+  await bot.sendMessage(chatId, t("stt_transcribing", lang));
+  try {
+    const fileLink = await bot.getFileLink(msg.voice.file_id);
+    const audioRes = await axios.get(fileLink, { responseType: "arraybuffer" });
+    const base64Audio = Buffer.from(audioRes.data).toString("base64");
+
+    const geminiRes = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      {
+        contents: [
+          {
+            parts: [
+              {
+                inlineData: {
+                  mimeType: "audio/ogg",
+                  data: base64Audio
+                }
+              },
+              {
+                text: "Bu audio fayldagi gaplarni matn ko'rinishiga o'tkazib ber. Faqat eshitilgan matnning o'zini qaytar, ortiqcha izoh yozma."
+              }
+            ]
+          }
+        ]
+      }
+    );
+
+    const transcribed = geminiRes.data.candidates[0].content.parts[0].text.trim();
+    if (transcribed) {
+      await bot.sendMessage(chatId, t("stt_result", lang).replace("{text}", transcribed));
+    } else {
+      await bot.sendMessage(chatId, t("stt_error", lang));
+    }
+  } catch (e) {
+    console.error("STT Error:", e.message);
+    await bot.sendMessage(chatId, t("stt_error", lang));
+  }
+});
+
+// ═══════════════════════════════════════════════════
+//  TEZKOR AI CHAT BUYRUG'I (/ai <savol>)
+// ═══════════════════════════════════════════════════
+
+bot.onText(/\/ai(?:\s+(.+))?/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  const lang = db.getUserLang(userId);
+
+  if (db.isBlocked(userId)) return;
+
+  const prompt = match[1];
+  if (!prompt) {
+    return bot.sendMessage(chatId, "Format: `/ai <savolingiz>`", { parse_mode: "Markdown" });
+  }
+
+  if (!process.env.GEMINI_API_KEY) {
+    return bot.sendMessage(chatId, "❌ Gemini API Key sozlanmagan! Admin bilan bog'laning.");
+  }
+
+  await bot.sendMessage(chatId, t("ai_thinking", lang));
+  try {
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      {
+        contents: [{ parts: [{ text: prompt }] }]
+      }
+    );
+    const answer = response.data.candidates[0].content.parts[0].text;
+    return bot.sendMessage(chatId, answer, { parse_mode: "Markdown" });
+  } catch (e) {
+    console.error("AI Error:", e.message);
+    return bot.sendMessage(chatId, t("ai_error", lang));
+  }
+});
+
+// ═══════════════════════════════════════════════════
+//  ADMIN KOMANDALARI: BLOCK / UNBLOCK
+// ═══════════════════════════════════════════════════
+
+bot.onText(/\/block\s+(\d+)/, (msg, match) => {
+  const userId = msg.from.id;
+  if (!isAdmin(userId)) return;
+  const targetId = parseInt(match[1]);
+  db.blockUser(targetId, "blocked");
+  bot.sendMessage(msg.chat.id, `✅ Foydalanuvchi bloklandi: \`${targetId}\``, { parse_mode: "Markdown" });
+});
+
+bot.onText(/\/unblock\s+(\d+)/, (msg, match) => {
+  const userId = msg.from.id;
+  if (!isAdmin(userId)) return;
+  const targetId = parseInt(match[1]);
+  db.blockUser(targetId, "active");
+  bot.sendMessage(msg.chat.id, `✅ Foydalanuvchi blokdan ochildi: \`${targetId}\``, { parse_mode: "Markdown" });
 });
 
 // ═══════════════════════════════════════════════════
